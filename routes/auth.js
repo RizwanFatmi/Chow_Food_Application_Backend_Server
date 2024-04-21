@@ -1,11 +1,13 @@
 const express = require('express');
 const User = require('../models/UsersList');
 const Food = require('../models/FoodList');
-const Login = require("../models/Login");
 const Cart = require("../models/Cart");
 const Order = require("../models/Order")
 const router = express.Router();
 const { body, validationResult } = require('express-validator');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const JWT_SECRET="$ad@!hddd@jkh%&JJJ#";
 
 
 
@@ -13,34 +15,62 @@ const { body, validationResult } = require('express-validator');
 
 
 // ADD USER 
+
 router.post('/adduser', [
   body('name', 'Enter a valid name').isLength({ min: 4 }),
   body('address', 'Enter a valid address').isLength({ min: 10 }),
   body('mobile', 'Enter a valid mobile number').isLength({ min: 10 }),
   body('email', 'Enter a valid Email').isEmail(),
-  body('password', 'Password must be atleast 5 characters').isLength({ min: 5 }),
+  body('password', 'Password must be atleast 6 characters').isLength({ min: 6 }),
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
   }
-  let user = await User.findOne({ email: req.body.email });
-  if (user) {
-    return res.status(404).json({ errors: "This email is alredy used by another user" })
+  
+  try {
+    let user = await User.findOne({ email: req.body.email });
+    if (user) {
+      return res.status(404).json({ errors: "This email is already used by another user" });
+    }
+    
+    // Hash the password before saving it to the database
+    const hashedPassword = await bcrypt.hash(req.body.password, 10); // 10 is the salt rounds
+    
+    user = await User.create({
+      name: req.body.name,
+      address: req.body.address,
+      mobile: req.body.mobile,
+      email: req.body.email,
+      password: hashedPassword, // Save the hashed password
+    });
+    
+   return res.status(200).send({success: true});
+  } catch (error) {
+    console.error(error.message);
+    res.status(500).send('Server Error');
   }
-  user = await User.create({
-    name: req.body.name,
-    address: req.body.address,
-    mobile: req.body.mobile,
-    email: req.body.email,
-    password: req.body.password,
+});
 
-  })
-
-  res.json(user)
-})
 /****************************END************************************/
 
+
+// ACTIVE/DE-ACTIVE USER 
+router.post('/changeuserstatus', async (req, res) => {
+  
+  const { _id, status } = req.body;
+  try {
+    const user = await User.updateOne(
+      { _id },
+      { $set: { active: status === "Active" ? true : false } }
+    );
+   return res.status(200).send({success: true});
+  } catch (error) {
+    console.error(error.message);
+    res.status(500).send("Server Error")
+  }
+})
+/****************************END************************************/
 
 // DELETE USER 
 router.post('/deleteuser', async (req, res) => {
@@ -49,7 +79,7 @@ router.post('/deleteuser', async (req, res) => {
   try {
   
     let user= await User.findOneAndRemove({_id});
-    res.json('Deleted succesfully')
+   return res.status(200).send({success: true});
   } catch (error) {
     console.error(error.message);
     res.status(500).send(" Cannot Delete!! Server Error")
@@ -60,86 +90,84 @@ router.post('/deleteuser', async (req, res) => {
 
 
 // LOGIN
-router.post('/login', [
-  body('email', 'Enter a valid Email').isEmail(),
-  body('password', 'Password cannot be blank').exists(),
-], async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
-  }
-  const { email, password } = req.body;
+router.post('/login', async (req, res) => {
+  const { email, password } = req.body.user;
   try {
     let user = await User.findOne({ email });
-    if (password != user.password) {
-      return res.status(400).json({ error: "Please try to login with correct credentials" })
+    if (!user) {
+      return res.status(400).json({ error: "Invalid credentials",  success: false  });
     }
-    const payload = {
-      user: {
-        id: user.id
-      }
+    if (user && user.active == false) {
+      return res.status(404).json({ error: "User is not active",  success: false  });
     }
-    
-    login = await Login.create({
-      
-      name: user.name,
-      address: user.address,
-      mobile: user.mobile,
-      email: user.email,
-      password: user.password,
-  })
-  res.json(login)
-  
-    
+    const passwordMatch = await bcrypt.compare(password, user.password);
+    if (!passwordMatch) {
+      return res.status(400).json({ error: "Invalid credentials",  success: false  });
+    }
 
+    const data = {
+      user: {
+        id: user.id,
+      },
+    };
+    const token = jwt.sign(data, JWT_SECRET);
+    // Combine the token and success message in the response
+    res.status(200).json({ token, success: true });
+    
   } catch (error) {
     console.error(error.message);
-    res.status(500).send("Please try to login with correct credentials")
+    res.status(500).send("Server Error");
   }
-})
+});
+
 /****************************END************************************/
 
 
 
-// LOGOUT 
-router.get('/logout', async (req, res) => {
-
-try{
-    let logout= await Login.findOneAndRemove();
-    res.json('Logout succesfully')
-}
-catch (error) {
-  console.error(error.message);
-  res.status(500).send("Please try to login with correct credentials")
-}
-  
-})
-/****************************END************************************/
 
 // LOG DATA 
 router.get('/logdata', async (req, res) => {
+  try {
+    const token = req.header('token');
+    if (!token){
+      return res.status(404).json({ message: 'Please Login to Continue!' });
+    } 
+    const data = jwt.verify(token,JWT_SECRET);
+    const _id = data.user.id;
+    const logdata = await User.findById(_id, { password: 0 });
+    if (!logdata) {
+      return res.status(404).json({ message: 'User data not found' });
+    }
+    res.json(logdata);
+  } catch (error) {
+    // Handle the error appropriately, don't send a response here
+    return res.status(500).json({ message: "Server Error" });
+  }
+});
 
- 
-  let logdata= await Login.findOne();
-  res.json(logdata)
 
-})
 /****************************END************************************/
 
 
 
 // USER LIST
-router.get('/userlist', async (req, res) => {
-
+router.post('/userlist', async (req, res) => {
+  const {  currentPage = 1, pageSize = 10 } = req.body;
+  const skip = (currentPage - 1) * pageSize;
   try {
-    let user = await User.find();
-    res.json(user)
-
+    const user = await User.find({ role: "User" }).select("-password").sort({ dateCreated: -1 }).skip(skip).limit(pageSize);
+    const totalItems = await User.countDocuments(); 
+    const totalPages = Math.ceil(totalItems / pageSize); 
+    res.status(200).json({
+      currentPage,
+      pageSize,
+      totalItems,
+      totalPages,
+      user,
+    });
   } catch (error) {
-
     console.error(error.message);
     res.status(500).send("Server error")
-
   }
 })
 /****************************END************************************/
@@ -154,15 +182,14 @@ router.post('/addfood', [
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
-  }
-  
+  }  
   food = await Food.create({
     name: req.body.name,
     description: req.body.description,
     price: req.body.price,
     image: req.body.image,
   })
-
+ return res.status(200).send({success: true});
   res.json(food)
 })
 /****************************END************************************/
@@ -184,7 +211,7 @@ router.post('/updatefood',[
       $set : {name,description,price,image}
     });
  
-    res.json('Updated succesfully')
+   return res.status(200).send({success: true});
   } catch (error) {
     console.error(error.message);
     res.status(500).send("Cannot Update!! Server Error")
@@ -200,7 +227,7 @@ router.post('/deletefood', async (req, res) => {
   try {
   
     let food= await Food.findOneAndRemove({_id});
-    res.json('Deleted succesfully')
+   return res.status(200).send({success: true});
   } catch (error) {
     console.error(error.message);
     res.status(500).send(" Cannot Delete!! Server Error")
@@ -208,42 +235,15 @@ router.post('/deletefood', async (req, res) => {
 })
 /****************************END************************************/
 
-
-// GET FOOD 
-router.post('/getfood', async (req, res) => {
-  
-  const { name } = req.body;
-  try {
-    let food = await Food.findOne({ name });
-    
-    const payload = {
-      food: {
-        id: food.id
-      }
-    }
-    res.json(food)
-
-  } catch (error) {
-    console.error(error.message);
-    res.status(500).send("Server Error")
-  }
-})
-/****************************END************************************/
-
 // FOOD LIST
 router.get('/foodlist', async (req, res) => {
-
   try {
-    let food = await Food.find();
+    let food = await Food.find().sort({ dateCreated: -1 });
 
-    
     res.json(food)
-
   } catch (error) {
-
     console.error(error.message);
-    res.status(500).send("Server error")
-
+    res.status(500).send("Server error");
   }
 })
 /****************************END************************************/
@@ -254,51 +254,29 @@ router.get('/foodlist', async (req, res) => {
 // ADD TO CART
 router.post('/addtocart', async (req, res) => {
   
-  const { _id, quantity } = req.body;
+  const { userId, foodId, quantity } = req.body;
   try {
-
-    let login= await Login.findOne();
-    if(login){
-    let food= await Food.findOne({_id});
-    let val = parseInt(quantity)*parseInt(food.price)
-    let v = val.toString();
-    cart = await Cart.create({
-
-    username : login.name,
-    email : login.email,
-    productname : food.name,
-    quantity : req.body.quantity,
-    price : food.price,
-    value : v,
-    image : food.image
-  })
-  res.json(cart)
-  
-}
-
-
-  } catch (error) {
+    cart = await Cart.create({userId,foodId,quantity});
+   return res.status(200).send({success: true});
+ } catch (error) {
     console.error(error.message);
     res.status(500).send("Server error")
   }
-})
+});
 /****************************END************************************/
 
 
 
 
 // CART DATA
-router.get('/cartdata', async (req, res) => {
-
-    let login= await Login.findOne();
-    if(login){
-    let cart= await Cart.find({email: login.email});
-  res.json(cart)
-  
+router.post('/cartdata', async (req, res) => {
+  try{
+  let cart= await Cart.find({userId: req.body.userId}).sort({_id:-1}).populate('userId').populate('foodId');
+  res.json(cart) 
+} catch (error) {
+  console.error(error.message);
+  res.status(500).send("Server error")
 }
-
-
-  
 })
 /****************************END************************************/
 
@@ -310,7 +288,7 @@ router.post('/deletecart', async (req, res) => {
   try {
   
     let food= await Cart.findOneAndRemove({_id});
-    res.json('Deleted succesfully')
+   return res.status(200).send({success: true});
   } catch (error) {
     console.error(error.message);
     res.status(500).send(" Cannot Delete!! Server Error")
@@ -320,39 +298,68 @@ router.post('/deletecart', async (req, res) => {
 
 // ORDER FOOD 
 router.post('/orderfood', async (req, res) => {
-  
-  const { _id } = req.body;
+  const userId = req.body.userId;
+
   try {
-   let currentdate = new Date();
-    let d =  currentdate.getDate()  +"-" + (currentdate.getMonth()+1)
-    + "-" + currentdate.getFullYear();
+    // Find the cart items for the user
+    const cartItems = await Cart.find({ userId });
 
-    let login= await Login.findOne();
-  
-    let cart= await Cart.findOne({_id});
+    // Find user details
+    const user = await User.findOne({ _id: userId });
 
-    order = await Order.create({
+    // Construct an array of products for the order
+    const products = await Promise.all(cartItems.map(async (cartItem) => {
+      // Fetch food details for each cart item
+      const foodDetails = await Food.findOne({ _id: cartItem.foodId });
 
-      date : d,
-      username : login.name,
-      address  : login.address,
-      mobile : login.mobile,
-      email : login.email,
-      productname : cart.productname,
-      quantity : cart.quantity,
-      price : cart.price,
-      value : cart.value,
-      image : cart.image
-    })
-    res.json(order)
+      // Calculate value
+      const value = (parseFloat(cartItem.quantity) * parseFloat(foodDetails.price)).toString();
 
-  
-   
+      return {
+        productname: foodDetails.name,
+        description: foodDetails.description,
+        quantity: cartItem.quantity,
+        price: foodDetails.price,
+        value,
+        image: foodDetails.image
+      };
+    }));
+
+    // Generate a unique order number
+    const orderNumber = generateOrderNumber();
+
+    // Calculate total order value
+    const totalOrderValue = products.reduce((total, product) => total + parseFloat(product.value), 0).toString();
+
+    // Create the order
+    const order = await Order.create({
+      orderNumber,
+      username: user.name,
+      address: user.address,
+      mobile: user.mobile,
+      email: user.email,
+      products, 
+      totalValue: totalOrderValue,
+    });
+
+    // Delete cart items after order is placed
+    await Cart.deleteMany({ userId });
+
+   return res.status(200).send({success: true});
   } catch (error) {
     console.error(error.message);
-    res.status(500).send("Server Error!!")
+    res.status(500).send("Server Error!!");
   }
-})
+});
+
+// Function to generate a unique order number (you can replace this with your own logic)
+function generateOrderNumber() {
+  const prefix = "ODIN1504";
+  const randomSixDigitNumber = Math.floor(100000 + Math.random() * 900000).toString();
+  return prefix + randomSixDigitNumber;
+}
+
+
 
 
 
@@ -362,35 +369,32 @@ router.post('/orderfood', async (req, res) => {
 
 
 // ORDER LIST
-router.get('/orderlist', async (req, res) => {
-
+router.post('/orderlist', async (req, res) => {
+  const {  currentPage = 1, pageSize = 10 } = req.body;
+  const skip = (currentPage - 1) * pageSize;
   try {
-    let order = await Order.find();
-
-    
-    res.json(order)
-
+    const order = await Order.find().sort({orderDate:-1}).skip(skip).limit(pageSize);
+    const totalItems = await Order.countDocuments(); 
+    const totalPages = Math.ceil(totalItems / pageSize); 
+    res.status(200).json({
+      currentPage,
+      pageSize,
+      totalItems,
+      totalPages,
+      order,
+    });
   } catch (error) {
-
     console.error(error.message);
     res.status(500).send("Server error")
-
   }
 })
 /****************************END************************************/
 
 // MY ORDER DATA
-router.get('/myorder', async (req, res) => {
-
-  let login= await Login.findOne();
-  if(login){
-  let myorder= await Order.find({email: login.email});
-res.json(myorder)
-
-}
-
-
-
+router.post('/myorder', async (req, res) => {
+  const userEmail = req.body.userEmail;
+  let myorder= await Order.find({email: userEmail}).sort({orderDate:-1});
+  res.json(myorder);
 })
 /****************************END************************************/
 

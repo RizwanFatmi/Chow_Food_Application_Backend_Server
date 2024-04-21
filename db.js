@@ -7,7 +7,7 @@ mongoose.connect(mongoURL,{
     useUnifiedTopology: true
   }
 )
-.then(()=>console.log("connected"))
+.then(()=>console.log("Database connected"))
 .catch((err)=>console.log(err+"  Not connected"));
 
 

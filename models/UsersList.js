@@ -9,6 +9,9 @@ const userSchema = new  Schema({
     mobile : {type: String , required:true},
     email : {type: String , required:true, unique: true},
     password : {type: String , required:true},
+    role: {type: String, default: "User"},
+    dateCreated: { type: Date, default: Date.now }, 
+    active:  { type: Boolean, default: true }, 
 });
 
 

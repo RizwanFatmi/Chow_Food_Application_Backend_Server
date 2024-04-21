@@ -1,8 +1,9 @@
 const express = require("express");
 const db = require("./db.js")
 const app = express();
-const port = 4000
 
+
+const port = 4000
 
 
 
@@ -11,7 +12,7 @@ const port = 4000
 app.use(express.json());
 
 app.get("/", (req, res) => {
-  res.send('Hello World!')
+  res.send('Welcome to the Backend')
 });
 
 
@@ -19,5 +20,5 @@ app.use('/api/auth' , require('./routes/auth'))
 
 
 app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`)
+  console.log(`App listening on port ${port}`)
 })   
